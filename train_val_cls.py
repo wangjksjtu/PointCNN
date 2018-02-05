@@ -18,6 +18,28 @@ import tensorflow as tf
 from datetime import datetime
 
 
+def getindexs(index_num, batch_size, total_num):
+    lower = index_num * batch_size % total_num
+    upper = (index_num + 1) * batch_size % total_num
+    if lower < upper:
+        return (True, lower, upper)
+    else:
+        return (False, upper, lower)
+
+
+def load_one_batch(data, indexs, description='data'):
+    if description == 'data':
+        if indexs[0]:
+            return data[indexs[1]:indexs[2], :, :]
+        else:
+            return np.concatenate([data[indexs[2]:, :, :], data[0:indexs[1], :, :]])
+    else:
+        if indexs[0]:
+            return data[indexs[1]:indexs[2]]
+        else:
+            return np.concatenate([data[indexs[2]:], data[0:indexs[1]]])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', '-t', help='Path to data', required=True)
@@ -57,7 +79,7 @@ def main():
     # Prepare inputs
     print('{}-Preparing datasets...'.format(datetime.now()))
     data_train, label_train, data_val, label_val = setting.load_fn(args.path, args.path_val)
-
+    print(data_train.shape, label_train.shape)
     if setting.save_ply_fn is not None:
         folder = os.path.join(root_folder, 'pts')
         print('{}-Saving samples as .ply files to {}...'.format(datetime.now(), folder))
@@ -85,49 +107,29 @@ def main():
     global_step = tf.Variable(0, trainable=False, name='global_step')
     is_training = tf.placeholder(tf.bool, name='is_training')
 
-    data_train_placeholder = tf.placeholder(data_train.dtype, data_train.shape)
-    label_train_placeholder = tf.placeholder(label_train.dtype, label_train.shape)
-    data_val_placeholder = tf.placeholder(data_val.dtype, data_val.shape)
-    label_val_placeholder = tf.placeholder(label_val.dtype, label_val.shape)
-    handle = tf.placeholder(tf.string, shape=[])
-
-    ######################################################################
-    dataset_train = tf.data.Dataset.from_tensor_slices((data_train_placeholder, label_train_placeholder))
-    if setting.map_fn is not None:
-        dataset_train = dataset_train.map(lambda data, label: tuple(tf.py_func(
-            setting.map_fn, [data, label], [tf.float32, label.dtype])), num_parallel_calls=setting.num_parallel_calls)
-    dataset_train = dataset_train.shuffle(buffer_size=batch_size * 4)
+    data_train_placeholder = tf.placeholder(data_train.dtype, [None, data_train.shape[1], data_train.shape[2]])
+    label_train_placeholder = tf.placeholder(label_train.dtype, [None])
+    #data_val_placeholder = tf.placeholder(data_val.dtype, [None, data_val.shape[1], data_val.shape[2]])
+    #label_val_placeholder = tf.placeholder(label_val.dtype, [None])
 
     if setting.keep_remainder:
-        dataset_train = dataset_train.batch(batch_size)
         batch_num_per_epoch = math.ceil(num_train / batch_size)
     else:
-        dataset_train = dataset_train.apply(tf.contrib.data.batch_and_drop_remainder(batch_size))
         batch_num_per_epoch = math.floor(num_train / batch_size)
     batch_num = batch_num_per_epoch * num_epochs
     print('{}-{:d} training batches.'.format(datetime.now(), batch_num))
 
-    dataset_train = dataset_train.repeat()
-    iterator_train = dataset_train.make_initializable_iterator()
-
-    dataset_val = tf.data.Dataset.from_tensor_slices((data_val_placeholder, label_val_placeholder))
-    if setting.map_fn is not None:
-        dataset_val = dataset_val.map(lambda data, label: tuple(tf.py_func(
-            setting.map_fn, [data, label], [tf.float32, label.dtype])), num_parallel_calls=setting.num_parallel_calls)
     if setting.keep_remainder:
-        dataset_val = dataset_val.batch(batch_size)
         batch_num_val = math.ceil(num_val / batch_size)
     else:
-        dataset_val = dataset_val.apply(tf.contrib.data.batch_and_drop_remainder(batch_size))
         batch_num_val = math.floor(num_val / batch_size)
-    iterator_val = dataset_val.make_initializable_iterator()
 
-    iterator = tf.data.Iterator.from_string_handle(handle, dataset_train.output_types, dataset_train.output_shapes)
-    (pts_fts, labels) = iterator.get_next()
+    # (pts_fts, labels) = iterator.get_next()
 
     features_augmented = None
     if setting.data_dim > 3:
-        points, features = tf.split(pts_fts, [3, setting.data_dim - 3], axis=-1, name='split_points_features')
+        points, features = tf.split(data_train_placeholder, [3, setting.data_dim - 3], axis=2, name='split_points_features')
+        print(points, features)
         if setting.use_extra_features:
             features_sampled = tf.gather_nd(features, indices=indices, name='features_sampled')
             if setting.with_normal_feature:
@@ -135,14 +137,14 @@ def main():
             else:
                 features_augmented = features_sampled
     else:
-        points = pts_fts
+        points = data_train_placeholder
     points_sampled = tf.gather_nd(points, indices=indices, name='points_sampled')
     points_augmented = pf.augment(points_sampled, xforms, jitter_range)
-
+    print(points_augmented, features_augmented)
     net = model.Net(points=points_augmented, features=features_augmented, num_class=num_class,
                     is_training=is_training, setting=setting)
     logits, probs = net.logits, net.probs
-    labels_2d = tf.expand_dims(labels, axis=-1, name='labels_2d')
+    labels_2d = tf.expand_dims(label_train_placeholder, axis=-1, name='labels_2d')
     labels_tile = tf.tile(labels_2d, (1, tf.shape(probs)[1]), name='labels_tile')
     loss_op = tf.losses.sparse_softmax_cross_entropy(labels=labels_tile, logits=logits)
     t_1_acc_op = pf.top_1_accuracy(probs, labels_tile)
@@ -204,22 +206,10 @@ def main():
             saver.restore(sess, args.load_ckpt)
             print('{}-Checkpoint loaded from {}!'.format(datetime.now(), args.load_ckpt))
 
-        handle_train = sess.run(iterator_train.string_handle())
-        handle_val = sess.run(iterator_val.string_handle())
-
-        sess.run(iterator_train.initializer, feed_dict={
-            data_train_placeholder: data_train,
-            label_train_placeholder: label_train,
-        })
-
         for batch_idx_train in range(batch_num):
             ######################################################################
             # Validation
             if (batch_idx_train != 0 and batch_idx_train % step_val == 0) or batch_idx_train == batch_num - 1:
-                sess.run(iterator_val.initializer, feed_dict={
-                    data_val_placeholder: data_val,
-                    label_val_placeholder: label_val,
-                })
                 filename_ckpt = os.path.join(folder_ckpt, 'iter')
                 saver.save(sess, filename_ckpt, global_step=global_step)
                 print('{}-Checkpoint saved to {}!'.format(datetime.now(), filename_ckpt))
@@ -232,11 +222,14 @@ def main():
                     else:
                         batch_size_val = num_val % batch_size
                     xforms_np, rotations_np = pf.get_xforms(batch_size_val, rotation_range=rotation_range_val,
-                                                                order=setting.order)
+                                                            order=setting.order)
                     _, loss_val, t_1_acc_val = \
                         sess.run([update_ops, loss_op, t_1_acc_op],
                                  feed_dict={
-                                     handle: handle_val,
+                                     data_train_placeholder: load_one_batch(data_val, getindexs(batch_idx_val, batch_size_val,
+                                                                                              num_val), "data"),
+                                     label_train_placeholder: load_one_batch(label_val, getindexs(batch_idx_val, batch_size_val,
+                                                                                              num_val), "label"),
                                      indices: pf.get_indices(batch_size_val, sample_num, point_num),
                                      xforms: xforms_np,
                                      rotations: rotations_np,
@@ -264,7 +257,8 @@ def main():
 
             ######################################################################
             # Training
-            if not setting.keep_remainder or num_train % batch_size == 0 or (batch_idx_train % batch_num_per_epoch) != (batch_num_per_epoch - 1):
+            if not setting.keep_remainder or num_train % batch_size == 0 or (batch_idx_train % batch_num_per_epoch) != (
+                batch_num_per_epoch - 1):
                 batch_size_train = batch_size
             else:
                 batch_size_train = num_train % batch_size
@@ -273,11 +267,19 @@ def main():
             offset = min(offset, sample_num // 4)
             sample_num_train = sample_num + offset
             xforms_np, rotations_np = pf.get_xforms(batch_size_train, rotation_range=rotation_range,
-                                                        order=setting.order)
+                                                    order=setting.order)
+
+            print(data_train.shape)
             _, loss, t_1_acc, summaries = \
                 sess.run([train_op, loss_op, t_1_acc_op, summaries_op],
                          feed_dict={
-                             handle: handle_train,
+                             # handle: handle_train,
+                             data_train_placeholder: load_one_batch(data_train,
+                                                                    getindexs(batch_idx_train, batch_size_train, num_train),
+                                                                    "data"),
+                             label_train_placeholder: load_one_batch(label_train,
+                                                                    getindexs(batch_idx_train, batch_size_train, num_train),
+                                                                    "label"),
                              indices: pf.get_indices(batch_size_train, sample_num_train, point_num),
                              xforms: xforms_np,
                              rotations: rotations_np,

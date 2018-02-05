@@ -267,14 +267,49 @@ def batch_normalization(data, is_training, name, reuse=None):
 
 def separable_conv2d(input, output, name, is_training, kernel_size, depth_multiplier=1,
                      reuse=None, with_bn=True, activation=tf.nn.elu):
+    print (input, output, kernel_size)
+
+    depthwise_kernel_shape = (kernel_size[0],
+                              kernel_size[1],
+                              int(input.shape[3]),
+                              depth_multiplier)
+
+    pointwise_kernel_shape = (1, 1,
+                              depth_multiplier * int(input.shape[3]),
+                              output)
+
+    print (depthwise_kernel_shape, pointwise_kernel_shape)
+
+    depthwise_kernel = tf.get_variable(name+"depth_conv_w",depthwise_kernel_shape,
+                                       initializer=tf.contrib.layers.xavier_initializer(),
+                                       regularizer=tf.contrib.layers.l2_regularizer(scale=1.0))
+    pointwise_kernel = tf.get_variable(name+"point_conv_w", pointwise_kernel_shape,
+                                       initializer=tf.contrib.layers.xavier_initializer(),
+                                       regularizer=tf.contrib.layers.l2_regularizer(scale=1.0))
+
+    conv_tensor = tf.nn.depthwise_conv2d(input, depthwise_kernel, [1, 1, 1, 1], padding='VALID')
+    conv2d = tf.nn.conv2d(conv_tensor, pointwise_kernel, [1, 1, 1, 1], padding='VALID', name=name)
+
+    #inputs = tf.transpose(input, (0, 2, 3, 1))
+    #conv2d = tf.nn.separable_conv2d(
+    #    input,
+    #    depthwise_kernel,
+    #    pointwise_kernel,
+    #    strides=(1,1,1,1),
+    #    padding="VALID",
+    #    )
+    #conv2d = tf.transpose(conv2d, (0, 3, 1, 2))
+
+    '''
     conv2d = tf.layers.separable_conv2d(input, output, kernel_size=kernel_size, strides=(1, 1), padding='VALID',
                                         activation=activation,
                                         depth_multiplier=depth_multiplier,
-                                        depthwise_initializer=tf.glorot_uniform_initializer(),
-                                        pointwise_initializer=tf.glorot_uniform_initializer(),
+                                        depthwise_initializer=tf.contrib.layers.xavier_initializer(),
+                                        pointwise_initializer=tf.contrib.layers.xavier_initializer(),
                                         depthwise_regularizer=tf.contrib.layers.l2_regularizer(scale=1.0),
                                         pointwise_regularizer=tf.contrib.layers.l2_regularizer(scale=1.0),
                                         reuse=reuse, name=name)
+    '''
     return batch_normalization(conv2d, is_training, name, reuse) if with_bn else conv2d
 
 
@@ -282,7 +317,7 @@ def conv2d(input, output, name, is_training, kernel_size,
            reuse=None, with_bn=True, activation=tf.nn.elu):
     conv2d = tf.layers.conv2d(input, output, kernel_size=kernel_size, strides=(1, 1), padding='VALID',
                               activation=activation,
-                              kernel_initializer=tf.glorot_uniform_initializer(),
+                              kernel_initializer=tf.contrib.layers.xavier_initializer(),
                               kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=1.0),
                               reuse=reuse, name=name)
     return batch_normalization(conv2d, is_training, name, reuse) if with_bn else conv2d
@@ -290,7 +325,7 @@ def conv2d(input, output, name, is_training, kernel_size,
 
 def dense(input, output, name, is_training, reuse=None, with_bn=True, activation=tf.nn.elu):
     dense = tf.layers.dense(input, units=output, activation=activation,
-                            kernel_initializer=tf.glorot_uniform_initializer(),
+                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
                             kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=1.0),
                             reuse=reuse, name=name)
     return batch_normalization(dense, is_training, name, reuse) if with_bn else dense
