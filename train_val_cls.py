@@ -194,6 +194,11 @@ def main():
     parameter_num = np.sum([np.prod(v.shape.as_list()) for v in tf.trainable_variables()])
     print('{}-Parameter number: {:d}.'.format(datetime.now(), parameter_num))
 
+
+
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    session = tf.Session(config=config)
     with tf.Session() as sess:
         summaries_op = tf.summary.merge_all('train')
         summaries_val_op = tf.summary.merge_all('val')
@@ -269,7 +274,6 @@ def main():
             xforms_np, rotations_np = pf.get_xforms(batch_size_train, rotation_range=rotation_range,
                                                     order=setting.order)
 
-            print(data_train.shape)
             _, loss, t_1_acc, summaries = \
                 sess.run([train_op, loss_op, t_1_acc_op, summaries_op],
                          feed_dict={
