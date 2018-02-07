@@ -161,6 +161,9 @@ def main():
     parameter_num = np.sum([np.prod(v.shape.as_list()) for v in tf.trainable_variables()])
     print('{}-Parameter number: {:d}.'.format(datetime.now(), parameter_num))
 
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    session = tf.Session(config=config)
     with tf.Session() as sess:
         summaries_op = tf.summary.merge_all('train')
         summaries_val_op = tf.summary.merge_all('val')

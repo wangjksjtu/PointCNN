@@ -4,9 +4,11 @@ num_parts = 50
 
 sample_num = 2048
 
-batch_size = 24
+batch_size = 16
 
 num_epochs = 1024
+
+label_weights = [1] * 50
 
 learning_rate_base = 0.01
 decay_steps = 20000
