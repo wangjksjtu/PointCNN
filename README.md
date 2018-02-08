@@ -33,6 +33,9 @@ Commands for training and testing ShapeNet Parts segmentation:
 ```
 cd data_conversions
 python3 ./download_datasets.py -d shapenet_partseg
+python3 prepare_partseg_data.py
+cd ../sampling
+sh tf_sampling_compile.sh
 cd ../pointcnn_seg
 ./train_val_shapenet.sh -g 0 -x shapenet_x8_2048_fps
 ./test_shapenet.sh -g 0 -x shapenet_x8_2048_fps -l ../../models/seg/pointcnn_seg_shapenet_x8_2048_fps_xxxx/ckpts/iter-xxxxx -r 10
